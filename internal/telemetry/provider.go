@@ -3,125 +3,218 @@ package telemetry
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"os"
+	"time"
 
 	"github.com/centrifugal/centrifugo/v6/internal/build"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/rs/zerolog/log"
+	prombridge "go.opentelemetry.io/contrib/bridges/prometheus"
+	"go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
-	"go.opentelemetry.io/otel/propagation"
+	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/log/global"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
-	"go.opentelemetry.io/otel/sdk/trace"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.20.0"
-	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/google"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/oauth"
 )
 
-// googleCloudAuthScope is the OAuth2 scope used when authenticating to Google
-// Cloud's OTLP endpoint (telemetry.googleapis.com) with Application Default
-// Credentials.
-const googleCloudAuthScope = "https://www.googleapis.com/auth/cloud-platform"
+// Providers holds all three OTel providers and manages their lifecycle.
+type Providers struct {
+	tracer *sdktrace.TracerProvider
+	meter  *sdkmetric.MeterProvider
+	logger *sdklog.LoggerProvider
+}
 
-func SetupTracing(ctx context.Context, googleCloudADCAuth bool) (*trace.TracerProvider, error) {
+// Shutdown flushes and shuts down all providers gracefully.
+func (p *Providers) Shutdown(ctx context.Context) {
+	if p.tracer != nil {
+		if err := p.tracer.Shutdown(ctx); err != nil {
+			log.Err(err).Msg("error shutting down tracer provider")
+		}
+	}
+	if p.meter != nil {
+		if err := p.meter.Shutdown(ctx); err != nil {
+			log.Err(err).Msg("error shutting down meter provider")
+		}
+	}
+	if p.logger != nil {
+		if err := p.logger.Shutdown(ctx); err != nil {
+			log.Err(err).Msg("error shutting down logger provider")
+		}
+	}
+}
+
+// Setup initialises all enabled OTel providers (traces, metrics, logs) and
+// registers them as the global providers. Call Providers.Shutdown on exit.
+func Setup(ctx context.Context, enableMetrics, enableLogs bool) (*Providers, error) {
+	p := &Providers{}
+
+	tp, err := setupTracing(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("setup tracing: %w", err)
+	}
+	p.tracer = tp
+
+	if enableMetrics {
+		mp, err := setupMetrics(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("setup metrics: %w", err)
+		}
+		p.meter = mp
+	}
+
+	if enableLogs {
+		lp, err := setupLogging(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("setup logging: %w", err)
+		}
+		p.logger = lp
+	}
+
+	return p, nil
+}
+
+// SetupTracing is kept for backward compatibility; prefer Setup.
+func SetupTracing(ctx context.Context) (*sdktrace.TracerProvider, error) {
+	return setupTracing(ctx)
+}
+
+func newResource() (*resource.Resource, error) {
+	serviceName := os.Getenv("OTEL_SERVICE_NAME")
+	if serviceName == "" {
+		serviceName = "centrifugo"
+	}
+	return resource.NewWithAttributes(
+		semconv.SchemaURL,
+		semconv.ServiceNameKey.String(serviceName),
+		attribute.String("version", build.Version),
+	), nil
+}
+
+// ── Traces ────────────────────────────────────────────────────────────────────
+
+func setupTracing(ctx context.Context) (*sdktrace.TracerProvider, error) {
 	exporterProtocol := os.Getenv("OTEL_EXPORTER_OTLP_PROTOCOL")
 	if exporterProtocol == "" {
 		exporterProtocol = "http/protobuf"
 	}
 
-	exporter, err := createExporter(ctx, exporterProtocol, googleCloudADCAuth)
+	exporter, err := createTraceExporter(ctx, exporterProtocol)
 	if err != nil {
 		return nil, err
 	}
 
-	serviceName := os.Getenv("OTEL_SERVICE_NAME")
-	if serviceName == "" {
-		serviceName = "centrifugo"
+	rs, err := newResource()
+	if err != nil {
+		return nil, err
 	}
 
-	// labels/tags/resources that are common to all traces.
-	rs := resource.NewWithAttributes(
-		semconv.SchemaURL,
-		semconv.ServiceNameKey.String(serviceName),
-		attribute.String("version", build.Version),
-	)
-
-	provider := trace.NewTracerProvider(
-		trace.WithBatcher(exporter),
-		trace.WithResource(rs),
+	provider := sdktrace.NewTracerProvider(
+		sdktrace.WithBatcher(exporter),
+		sdktrace.WithResource(rs),
 	)
 
 	otel.SetTracerProvider(provider)
+	otel.SetErrorHandler(&errorHandlerImpl{})
 
-	otel.SetTextMapPropagator(
-		propagation.NewCompositeTextMapPropagator(
-			propagation.TraceContext{}, // W3C Trace Context format; https://www.w3.org/TR/trace-context/
-		),
-	)
-
-	otel.SetErrorHandler(&ErrorHandlerImpl{})
 	return provider, nil
 }
 
-type ErrorHandlerImpl struct{}
-
-func (e ErrorHandlerImpl) Handle(err error) {
-	log.Err(err).Msg("opentelemetry error")
-}
-
-func createExporter(ctx context.Context, exporterProtocol string, googleCloudADCAuth bool) (*otlptrace.Exporter, error) {
+func createTraceExporter(ctx context.Context, exporterProtocol string) (*otlptrace.Exporter, error) {
 	if exporterProtocol == "grpc" {
-		var opts []otlptracegrpc.Option
-		if googleCloudADCAuth {
-			// Inject Google Cloud Application Default Credentials as per-RPC
-			// OAuth2 tokens so the exporter can authenticate against Google
-			// Cloud's OTLP endpoint (telemetry.googleapis.com). The access
-			// token is minted lazily on first export and then cached and
-			// auto-refreshed. Note: resolving ADC here (at startup) may do a
-			// one-time metadata-server probe when running on GCE without an
-			// explicit credentials file.
-			creds, err := oauth.NewApplicationDefault(ctx, googleCloudAuthScope)
-			if err != nil {
-				return nil, fmt.Errorf("error creating Google Cloud application default credentials: %w", err)
-			}
-			opts = append(opts, otlptracegrpc.WithDialOption(grpc.WithPerRPCCredentials(creds)))
-		}
-		return otlptracegrpc.New(ctx, opts...)
+		return otlptracegrpc.New(ctx)
 	}
-
 	if exporterProtocol == "http/protobuf" {
-		var opts []otlptracehttp.Option
-		if googleCloudADCAuth {
-			// Same as the gRPC path, but ADC tokens are attached by an OAuth2
-			// http.Client transport (which also refreshes them automatically)
-			// since the HTTP exporter has no per-RPC credentials concept.
-			client, err := googleCloudADCHTTPClient(ctx)
-			if err != nil {
-				return nil, err
-			}
-			opts = append(opts, otlptracehttp.WithHTTPClient(client))
-		}
-		return otlptracehttp.New(ctx, opts...)
+		return otlptracehttp.New(ctx)
 	}
-
 	return nil, fmt.Errorf("unsupported exporter protocol: %s", exporterProtocol)
 }
 
-// googleCloudADCHTTPClient returns an *http.Client that authenticates outgoing
-// requests with Google Cloud Application Default Credentials. The OAuth2
-// transport mints the access token lazily on first request and then caches and
-// auto-refreshes it. Resolving ADC (here, at startup) may perform a one-time
-// metadata-server probe when running on GCE without an explicit credentials file.
-func googleCloudADCHTTPClient(ctx context.Context) (*http.Client, error) {
-	ts, err := google.DefaultTokenSource(ctx, googleCloudAuthScope)
+// ── Metrics ───────────────────────────────────────────────────────────────────
+
+func setupMetrics(ctx context.Context) (*sdkmetric.MeterProvider, error) {
+	exporter, err := otlpmetrichttp.New(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("error creating Google Cloud application default credentials: %w", err)
+		return nil, err
 	}
-	return oauth2.NewClient(ctx, ts), nil
+
+	rs, err := newResource()
+	if err != nil {
+		return nil, err
+	}
+
+	reader := sdkmetric.NewPeriodicReader(
+		exporter,
+		// Go runtime metrics (goroutines, GC, memory histograms, …)
+		sdkmetric.WithProducer(runtime.NewProducer()),
+		// Existing Prometheus metrics (centrifugo_* + centrifuge_* + go_*)
+		sdkmetric.WithProducer(prombridge.NewMetricProducer(
+			prombridge.WithGatherer(prometheus.DefaultGatherer),
+		)),
+	)
+
+	mp := sdkmetric.NewMeterProvider(
+		sdkmetric.WithReader(reader),
+		sdkmetric.WithResource(rs),
+	)
+	otel.SetMeterProvider(mp)
+
+	if err := runtime.Start(
+		runtime.WithMinimumReadMemStatsInterval(time.Second),
+	); err != nil {
+		return nil, fmt.Errorf("start runtime metrics: %w", err)
+	}
+
+	return mp, nil
+}
+
+// ── Logs ──────────────────────────────────────────────────────────────────────
+
+func setupLogging(ctx context.Context) (*sdklog.LoggerProvider, error) {
+	exporter, err := otlploghttp.New(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	rs, err := newResource()
+	if err != nil {
+		return nil, err
+	}
+
+	lp := sdklog.NewLoggerProvider(
+		sdklog.WithProcessor(sdklog.NewBatchProcessor(exporter)),
+		sdklog.WithResource(rs),
+	)
+	global.SetLoggerProvider(lp)
+
+	// Wire zerolog → OTel log bridge.
+	installZerologBridge(lp)
+
+	return lp, nil
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+type errorHandlerImpl struct{}
+
+func (e errorHandlerImpl) Handle(err error) {
+	log.Err(err).Msg("opentelemetry error")
+}
+
+// otelLoggerName is the instrumentation scope used by the zerolog bridge.
+const otelLoggerName = "centrifugo"
+
+// logger returns the OTel logger used by the zerolog bridge.
+func otelLogger(lp otellog.LoggerProvider) otellog.Logger {
+	return lp.Logger(otelLoggerName)
 }

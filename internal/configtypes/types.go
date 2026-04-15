@@ -289,17 +289,8 @@ type OpenTelemetry struct {
 	Enabled   bool `mapstructure:"enabled" json:"enabled" envconfig:"enabled" yaml:"enabled" toml:"enabled" doc:"Enables OpenTelemetry tracing and metrics export."`
 	API       bool `mapstructure:"api" json:"api" envconfig:"api" yaml:"api" toml:"api" doc:"Enables OpenTelemetry instrumentation for HTTP/gRPC API requests."`
 	Consuming bool `mapstructure:"consuming" json:"consuming" envconfig:"consuming" yaml:"consuming" toml:"consuming" doc:"Enables OpenTelemetry instrumentation for consumer processing."`
-	// GoogleCloudADCAuth, when true, authenticates the OTLP exporter with
-	// Google Cloud Application Default Credentials (ADC). This allows exporting
-	// directly to Google Cloud's OTLP endpoint (telemetry.googleapis.com)
-	// without a sidecar collector. Works with both exporter protocols: over
-	// grpc the ADC token is attached as a per-RPC credential, over http/protobuf
-	// via an OAuth2 http.Client transport; in both cases the token refreshes
-	// automatically. The endpoint and target project are still configured via
-	// the standard OTEL_EXPORTER_OTLP_* environment variables (e.g.
-	// OTEL_EXPORTER_OTLP_ENDPOINT=https://telemetry.googleapis.com and
-	// OTEL_RESOURCE_ATTRIBUTES=gcp.project_id=PROJECT_ID).
-	GoogleCloudADCAuth bool `mapstructure:"google_cloud_adc_auth" json:"google_cloud_adc_auth" envconfig:"google_cloud_adc_auth" yaml:"google_cloud_adc_auth" toml:"google_cloud_adc_auth" doc:"Enables Google Cloud Application Default Credentials (ADC) authentication for the OTLP exporter, allowing direct export to Google Cloud without a sidecar collector."`
+	Metrics   bool `mapstructure:"metrics" json:"metrics" envconfig:"metrics" yaml:"metrics" toml:"metrics" doc:"Enables OpenTelemetry metrics export."`
+	Logs      bool `mapstructure:"logs" json:"logs" envconfig:"logs" yaml:"logs" toml:"logs" doc:"Enables OpenTelemetry logs export."`
 }
 
 type HttpAPI struct {
