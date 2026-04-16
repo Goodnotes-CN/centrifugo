@@ -1,0 +1,37 @@
+FROM goodnotes-cn-cn-shanghai.cr.volces.com/infra/golang:1.26-alpine AS builder
+
+ARG USE_CHINA_MIRROR=false
+RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then go env -w GOPROXY=https://goproxy.cn,direct; fi
+
+WORKDIR /build
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o centrifugo
+
+FROM goodnotes-cn-cn-shanghai.cr.volces.com/infra/alpine:3.22
+
+ARG USE_CHINA_MIRROR=false
+RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
+    sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories; fi
+
+ARG USER=centrifugo
+ARG UID=1000
+ARG GID=1000
+
+RUN addgroup -S -g $GID $USER && \
+    adduser -S -G $USER -u $UID $USER
+
+RUN apk --no-cache upgrade && \
+    apk --no-cache add ca-certificates && \
+    update-ca-certificates
+
+USER $USER
+
+WORKDIR /centrifugo
+
+COPY --from=builder /build/centrifugo /usr/local/bin/centrifugo
+
+CMD ["centrifugo"]
