@@ -258,6 +258,7 @@ func Mux(
 			otelHandler := middleware.NewOpenTelemetryHandler(op, nil)
 			if useOpenTelemetry {
 				apiMiddlewares = append(apiMiddlewares, otelHandler.Middleware)
+				apiMiddlewares = append(apiMiddlewares, middleware.TraceLogger)
 			}
 			apiMiddlewares = append(apiMiddlewares, middleware.Post)
 			if !cfg.HttpAPI.Insecure {
