@@ -23,6 +23,7 @@ import (
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	otellog "go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/log/global"
+	"go.opentelemetry.io/otel/propagation"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -59,6 +60,15 @@ func (p *Providers) Shutdown(ctx context.Context) {
 // Setup initialises all enabled OTel providers (traces, metrics, logs) and
 // registers them as the global providers. Call Providers.Shutdown on exit.
 func Setup(ctx context.Context, enableMetrics, enableLogs bool) (*Providers, error) {
+	// Propagate W3C TraceContext + Baggage on inbound and outbound calls so
+	// otelhttp/otelgrpc honour upstream traceparent headers and forward our
+	// span context to downstream services. Without this the SDK uses a NoOp
+	// propagator and every request becomes a new root trace.
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{},
+		propagation.Baggage{},
+	))
+
 	p := &Providers{}
 
 	tp, err := setupTracing(ctx)

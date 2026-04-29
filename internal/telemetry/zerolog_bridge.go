@@ -11,6 +11,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // installZerologBridge replaces the global zerolog writer with a MultiLevelWriter
@@ -19,6 +20,11 @@ import (
 func installZerologBridge(lp otellog.LoggerProvider) {
 	bridge := &zerologOTelWriter{logger: otelLogger(lp)}
 	log.Logger = log.Logger.Output(zerolog.MultiLevelWriter(os.Stderr, bridge))
+	// Make zerolog.Ctx(ctx) fall back to the global logger when no
+	// context-bound logger is set, so log.Ctx call sites never silently
+	// drop messages on code paths that haven't been threaded with a
+	// per-request logger.
+	zerolog.DefaultContextLogger = &log.Logger
 }
 
 // zerologOTelWriter implements zerolog.LevelWriter.  It parses each JSON line
@@ -75,11 +81,15 @@ func (w *zerologOTelWriter) emit(level zerolog.Level, p []byte) {
 		r.SetBody(otellog.StringValue(msg))
 	}
 
-	// All remaining fields become OTel attributes.
+	// All remaining fields become OTel attributes. trace_id/span_id are
+	// excluded because they are consumed below into the Record's
+	// first-class trace context slot via the emit ctx.
 	skip := map[string]bool{
 		zerolog.TimestampFieldName: true,
 		zerolog.LevelFieldName:     true,
 		zerolog.MessageFieldName:   true,
+		"trace_id":                 true,
+		"span_id":                  true,
 	}
 	attrs := make([]otellog.KeyValue, 0, len(fields))
 	for k, v := range fields {
@@ -90,7 +100,38 @@ func (w *zerologOTelWriter) emit(level zerolog.Level, p []byte) {
 	}
 	r.AddAttributes(attrs...)
 
-	w.logger.Emit(context.Background(), r)
+	// Reconstruct SpanContext from zerolog fields so the SDK populates
+	// the Record's first-class trace_id/span_id slots when Emit is called.
+	ctx := context.Background()
+	if sc, ok := spanContextFromFields(fields); ok {
+		ctx = trace.ContextWithSpanContext(ctx, sc)
+	}
+
+	w.logger.Emit(ctx, r)
+}
+
+// spanContextFromFields parses trace_id/span_id from a zerolog JSON line and
+// returns a remote SpanContext. Returns false if either is missing or invalid.
+func spanContextFromFields(fields map[string]interface{}) (trace.SpanContext, bool) {
+	tidStr, _ := fields["trace_id"].(string)
+	sidStr, _ := fields["span_id"].(string)
+	if tidStr == "" || sidStr == "" {
+		return trace.SpanContext{}, false
+	}
+	tid, err := trace.TraceIDFromHex(tidStr)
+	if err != nil {
+		return trace.SpanContext{}, false
+	}
+	sid, err := trace.SpanIDFromHex(sidStr)
+	if err != nil {
+		return trace.SpanContext{}, false
+	}
+	return trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    tid,
+		SpanID:     sid,
+		TraceFlags: trace.FlagsSampled,
+		Remote:     true,
+	}), true
 }
 
 // parseTime tries to parse zerolog's default timestamp format (RFC3339 string
