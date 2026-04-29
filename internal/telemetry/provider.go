@@ -14,7 +14,9 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
@@ -101,15 +103,20 @@ func newResource() (*resource.Resource, error) {
 	), nil
 }
 
+// otlpProtocol returns the OTLP exporter protocol from OTEL_EXPORTER_OTLP_PROTOCOL,
+// defaulting to "http/protobuf" when unset. Shared by traces, metrics and logs.
+func otlpProtocol() string {
+	p := os.Getenv("OTEL_EXPORTER_OTLP_PROTOCOL")
+	if p == "" {
+		return "http/protobuf"
+	}
+	return p
+}
+
 // ── Traces ────────────────────────────────────────────────────────────────────
 
 func setupTracing(ctx context.Context) (*sdktrace.TracerProvider, error) {
-	exporterProtocol := os.Getenv("OTEL_EXPORTER_OTLP_PROTOCOL")
-	if exporterProtocol == "" {
-		exporterProtocol = "http/protobuf"
-	}
-
-	exporter, err := createTraceExporter(ctx, exporterProtocol)
+	exporter, err := createTraceExporter(ctx, otlpProtocol())
 	if err != nil {
 		return nil, err
 	}
@@ -130,20 +137,20 @@ func setupTracing(ctx context.Context) (*sdktrace.TracerProvider, error) {
 	return provider, nil
 }
 
-func createTraceExporter(ctx context.Context, exporterProtocol string) (*otlptrace.Exporter, error) {
-	if exporterProtocol == "grpc" {
+func createTraceExporter(ctx context.Context, protocol string) (*otlptrace.Exporter, error) {
+	switch protocol {
+	case "grpc":
 		return otlptracegrpc.New(ctx)
-	}
-	if exporterProtocol == "http/protobuf" {
+	case "http/protobuf":
 		return otlptracehttp.New(ctx)
 	}
-	return nil, fmt.Errorf("unsupported exporter protocol: %s", exporterProtocol)
+	return nil, fmt.Errorf("unsupported exporter protocol: %s", protocol)
 }
 
 // ── Metrics ───────────────────────────────────────────────────────────────────
 
 func setupMetrics(ctx context.Context) (*sdkmetric.MeterProvider, error) {
-	exporter, err := otlpmetrichttp.New(ctx)
+	exporter, err := createMetricExporter(ctx, otlpProtocol())
 	if err != nil {
 		return nil, err
 	}
@@ -178,10 +185,20 @@ func setupMetrics(ctx context.Context) (*sdkmetric.MeterProvider, error) {
 	return mp, nil
 }
 
+func createMetricExporter(ctx context.Context, protocol string) (sdkmetric.Exporter, error) {
+	switch protocol {
+	case "grpc":
+		return otlpmetricgrpc.New(ctx)
+	case "http/protobuf":
+		return otlpmetrichttp.New(ctx)
+	}
+	return nil, fmt.Errorf("unsupported exporter protocol: %s", protocol)
+}
+
 // ── Logs ──────────────────────────────────────────────────────────────────────
 
 func setupLogging(ctx context.Context) (*sdklog.LoggerProvider, error) {
-	exporter, err := otlploghttp.New(ctx)
+	exporter, err := createLogExporter(ctx, otlpProtocol())
 	if err != nil {
 		return nil, err
 	}
@@ -201,6 +218,16 @@ func setupLogging(ctx context.Context) (*sdklog.LoggerProvider, error) {
 	installZerologBridge(lp)
 
 	return lp, nil
+}
+
+func createLogExporter(ctx context.Context, protocol string) (sdklog.Exporter, error) {
+	switch protocol {
+	case "grpc":
+		return otlploggrpc.New(ctx)
+	case "http/protobuf":
+		return otlploghttp.New(ctx)
+	}
+	return nil, fmt.Errorf("unsupported exporter protocol: %s", protocol)
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
