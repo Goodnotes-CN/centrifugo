@@ -9,6 +9,7 @@ import (
 
 	"github.com/centrifugal/centrifugo/v6/internal/api"
 	"github.com/centrifugal/centrifugo/v6/internal/config"
+	"github.com/centrifugal/centrifugo/v6/internal/middleware"
 	"github.com/centrifugal/centrifugo/v6/internal/tools"
 	"github.com/centrifugal/centrifugo/v6/internal/unigrpc"
 
@@ -46,7 +47,11 @@ func runGRPCAPIServer(cfg config.Config, node *centrifuge.Node, useAPIOpenteleme
 		grpcOpts = append(grpcOpts, grpc.Creds(credentials.NewTLS(grpcAPITLSConfig)))
 	}
 	if cfg.OpenTelemetry.Enabled && cfg.OpenTelemetry.API {
-		grpcOpts = append(grpcOpts, grpc.StatsHandler(otelgrpc.NewServerHandler()))
+		grpcOpts = append(grpcOpts,
+			grpc.StatsHandler(otelgrpc.NewServerHandler()),
+			grpc.UnaryInterceptor(middleware.GRPCTraceLoggerUnary()),
+			grpc.StreamInterceptor(middleware.GRPCTraceLoggerStream()),
+		)
 	}
 	grpcErrorMode, err := tools.OptionalStringChoice(cfg.GrpcAPI.ErrorMode, []string{config.TransportErrorMode})
 	if err != nil {

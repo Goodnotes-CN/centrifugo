@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/centrifugal/centrifugo/v6/internal/clienttrace"
 	"github.com/centrifugal/centrifugo/v6/internal/config"
 	"github.com/centrifugal/centrifugo/v6/internal/logutils"
 
@@ -65,18 +66,31 @@ func newCentrifugeLogHandler() *centrifugeLogHandler {
 
 func (h *centrifugeLogHandler) readEntries() {
 	for entry := range h.entries {
+		// Centrifuge LogEntry has no ctx field; for client-scoped log lines
+		// the Fields map carries a "client" key with the client ID, which we
+		// use to recover the connection's ctx from clienttrace.Get so the
+		// emitted zerolog event inherits trace_id / span_id.
+		logger := &log.Logger
+		if entry.Fields != nil {
+			if cid, ok := entry.Fields["client"].(string); ok {
+				if ctx := clienttrace.Get(cid); ctx != nil {
+					logger = log.Ctx(ctx)
+				}
+			}
+		}
+
 		var l *zerolog.Event
 		switch entry.Level {
 		case centrifuge.LogLevelTrace:
-			l = log.Trace()
+			l = logger.Trace()
 		case centrifuge.LogLevelDebug:
-			l = log.Debug()
+			l = logger.Debug()
 		case centrifuge.LogLevelInfo:
-			l = log.Info()
+			l = logger.Info()
 		case centrifuge.LogLevelWarn:
-			l = log.Warn()
+			l = logger.Warn()
 		case centrifuge.LogLevelError:
-			l = log.Error()
+			l = logger.Error()
 		default:
 			continue
 		}
