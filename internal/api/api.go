@@ -166,7 +166,7 @@ func (h *Executor) Publish(ctx context.Context, cmd *PublishRequest) *PublishRes
 	resp := &PublishResponse{}
 
 	if ch == "" {
-		log.Error().Err(errors.New("channel required for publish")).Msg("bad publish request")
+		log.Ctx(ctx).Error().Err(errors.New("channel required for publish")).Msg("bad publish request")
 		resp.Error = ErrorBadRequest
 		return resp
 	}
@@ -195,7 +195,7 @@ func (h *Executor) Publish(ctx context.Context, cmd *PublishRequest) *PublishRes
 
 	// Data format validation
 	if err := config.ValidatePublicationData(data, chOpts.PublicationDataFormat); err != nil {
-		log.Error().Err(err).Str("channel", ch).Msg("bad publish request")
+		log.Ctx(ctx).Error().Err(err).Str("channel", ch).Msg("bad publish request")
 		resp.Error = ErrorBadRequest
 		return resp
 	}
@@ -222,7 +222,7 @@ func (h *Executor) Publish(ctx context.Context, cmd *PublishRequest) *PublishRes
 		centrifuge.WithVersion(cmd.Version, cmd.VersionEpoch),
 	)
 	if err != nil {
-		log.Error().Err(err).Str("channel", cmd.Channel).Msg("error publishing data to channel")
+		log.Ctx(ctx).Error().Err(err).Str("channel", cmd.Channel).Msg("error publishing data to channel")
 		resp.Error = ErrorInternal
 		return resp
 	}
@@ -249,7 +249,7 @@ func (h *Executor) Broadcast(ctx context.Context, cmd *BroadcastRequest) *Broadc
 	}
 
 	if len(channels) == 0 {
-		log.Error().Err(errors.New("channels required for broadcast")).Msg("bad broadcast request")
+		log.Ctx(ctx).Error().Err(errors.New("channels required for broadcast")).Msg("bad broadcast request")
 		resp.Error = ErrorBadRequest
 		return resp
 	}
@@ -279,7 +279,7 @@ func (h *Executor) Broadcast(ctx context.Context, cmd *BroadcastRequest) *Broadc
 			if ch == "" {
 				respError := ErrorBadRequest
 				metrics.IncAPIError(h.config.Protocol, "broadcast_publish", respError.Code)
-				log.Error().Err(errors.New("channel can not be blank in broadcast")).Msg("bad broadcast request")
+				log.Ctx(ctx).Error().Err(errors.New("channel can not be blank in broadcast")).Msg("bad broadcast request")
 				responses[i] = &PublishResponse{Error: respError}
 				return
 			}
@@ -288,14 +288,14 @@ func (h *Executor) Broadcast(ctx context.Context, cmd *BroadcastRequest) *Broadc
 			if err != nil {
 				respError := ErrorInternal
 				metrics.IncAPIError(h.config.Protocol, "broadcast_publish", respError.Code)
-				log.Error().Err(err).Str("channel", ch).Msg("error getting options for channel")
+				log.Ctx(ctx).Error().Err(err).Str("channel", ch).Msg("error getting options for channel")
 				responses[i] = &PublishResponse{Error: respError}
 				return
 			}
 			if !found {
 				respError := ErrorUnknownChannel
 				metrics.IncAPIError(h.config.Protocol, "broadcast_publish", respError.Code)
-				log.Error().Err(errors.New("channel not found")).Str("channel", ch).Msg("error getting options for channel")
+				log.Ctx(ctx).Error().Err(errors.New("channel not found")).Str("channel", ch).Msg("error getting options for channel")
 				responses[i] = &PublishResponse{Error: respError}
 				return
 			}
@@ -304,7 +304,7 @@ func (h *Executor) Broadcast(ctx context.Context, cmd *BroadcastRequest) *Broadc
 			if err := config.ValidatePublicationData(data, chOpts.PublicationDataFormat); err != nil {
 				respError := ErrorBadRequest
 				metrics.IncAPIError(h.config.Protocol, "broadcast_publish", respError.Code)
-				log.Error().Err(err).Str("channel", ch).Msg("bad broadcast request")
+				log.Ctx(ctx).Error().Err(err).Str("channel", ch).Msg("bad broadcast request")
 				responses[i] = &PublishResponse{Error: respError}
 				return
 			}
@@ -339,7 +339,7 @@ func (h *Executor) Broadcast(ctx context.Context, cmd *BroadcastRequest) *Broadc
 			} else {
 				respError := ErrorInternal
 				metrics.IncAPIError(h.config.Protocol, "publish", respError.Code)
-				log.Error().Err(err).Str("channel", ch).Msg("error publishing data to channel during broadcast")
+				log.Ctx(ctx).Error().Err(err).Str("channel", ch).Msg("error publishing data to channel during broadcast")
 				resp.Error = respError
 			}
 			responses[i] = resp
@@ -352,7 +352,7 @@ func (h *Executor) Broadcast(ctx context.Context, cmd *BroadcastRequest) *Broadc
 
 // Subscribe subscribes user to a channel and sends subscribe
 // control message to other nodes, so they could also subscribe user.
-func (h *Executor) Subscribe(_ context.Context, cmd *SubscribeRequest) *SubscribeResponse {
+func (h *Executor) Subscribe(ctx context.Context, cmd *SubscribeRequest) *SubscribeResponse {
 	defer metrics.ObserveAPICommand(time.Now(), h.config.Protocol, "subscribe")
 
 	resp := &SubscribeResponse{}
@@ -361,7 +361,7 @@ func (h *Executor) Subscribe(_ context.Context, cmd *SubscribeRequest) *Subscrib
 	channel := cmd.Channel
 
 	if channel == "" {
-		log.Error().Err(errors.New("channel required for subscribe")).Msg("bad subscribe request")
+		log.Ctx(ctx).Error().Err(errors.New("channel required for subscribe")).Msg("bad subscribe request")
 		resp.Error = ErrorBadRequest
 		return resp
 	}
@@ -421,7 +421,7 @@ func (h *Executor) Subscribe(_ context.Context, cmd *SubscribeRequest) *Subscrib
 		centrifuge.WithSubscribeHistoryMetaTTL(chOpts.HistoryMetaTTL.ToDuration()),
 	)
 	if err != nil {
-		log.Error().Err(err).Str("channel", channel).Str("user", user).Msg("error subscribing user to channel")
+		log.Ctx(ctx).Error().Err(err).Str("channel", channel).Str("user", user).Msg("error subscribing user to channel")
 		resp.Error = ErrorInternal
 		return resp
 	}
@@ -431,7 +431,7 @@ func (h *Executor) Subscribe(_ context.Context, cmd *SubscribeRequest) *Subscrib
 
 // Unsubscribe unsubscribes user from channel and sends unsubscribe
 // control message to other nodes, so they could also unsubscribe user.
-func (h *Executor) Unsubscribe(_ context.Context, cmd *UnsubscribeRequest) *UnsubscribeResponse {
+func (h *Executor) Unsubscribe(ctx context.Context, cmd *UnsubscribeRequest) *UnsubscribeResponse {
 	defer metrics.ObserveAPICommand(time.Now(), h.config.Protocol, "unsubscribe")
 
 	resp := &UnsubscribeResponse{}
@@ -453,7 +453,7 @@ func (h *Executor) Unsubscribe(_ context.Context, cmd *UnsubscribeRequest) *Unsu
 
 	err := h.node.Unsubscribe(user, channel, centrifuge.WithUnsubscribeClient(cmd.Client), centrifuge.WithUnsubscribeSession(cmd.Session))
 	if err != nil {
-		log.Error().Err(err).Str("channel", channel).Str("user", user).Msg("error unsubscribing user from channel")
+		log.Ctx(ctx).Error().Err(err).Str("channel", channel).Str("user", user).Msg("error unsubscribing user from channel")
 		resp.Error = ErrorInternal
 		return resp
 	}
@@ -463,7 +463,7 @@ func (h *Executor) Unsubscribe(_ context.Context, cmd *UnsubscribeRequest) *Unsu
 
 // Disconnect disconnects user by its ID and sends disconnect
 // control message to other nodes, so they could also disconnect user.
-func (h *Executor) Disconnect(_ context.Context, cmd *DisconnectRequest) *DisconnectResponse {
+func (h *Executor) Disconnect(ctx context.Context, cmd *DisconnectRequest) *DisconnectResponse {
 	defer metrics.ObserveAPICommand(time.Now(), h.config.Protocol, "disconnect")
 
 	resp := &DisconnectResponse{}
@@ -485,7 +485,7 @@ func (h *Executor) Disconnect(_ context.Context, cmd *DisconnectRequest) *Discon
 		centrifuge.WithDisconnectSession(cmd.Session),
 		centrifuge.WithDisconnectClientWhitelist(cmd.Whitelist))
 	if err != nil {
-		log.Error().Err(err).Str("user", user).Msg("error disconnecting user")
+		log.Ctx(ctx).Error().Err(err).Str("user", user).Msg("error disconnecting user")
 		resp.Error = ErrorInternal
 		return resp
 	}
@@ -494,7 +494,7 @@ func (h *Executor) Disconnect(_ context.Context, cmd *DisconnectRequest) *Discon
 }
 
 // Refresh user connection by its ID.
-func (h *Executor) Refresh(_ context.Context, cmd *RefreshRequest) *RefreshResponse {
+func (h *Executor) Refresh(ctx context.Context, cmd *RefreshRequest) *RefreshResponse {
 	defer metrics.ObserveAPICommand(time.Now(), h.config.Protocol, "refresh")
 
 	resp := &RefreshResponse{}
@@ -509,7 +509,7 @@ func (h *Executor) Refresh(_ context.Context, cmd *RefreshRequest) *RefreshRespo
 		centrifuge.WithRefreshInfo(cmd.Info),
 	)
 	if err != nil {
-		log.Error().Err(err).Str("user", user).Msg("error refreshing user")
+		log.Ctx(ctx).Error().Err(err).Str("user", user).Msg("error refreshing user")
 		resp.Error = ErrorInternal
 		return resp
 	}
@@ -518,7 +518,7 @@ func (h *Executor) Refresh(_ context.Context, cmd *RefreshRequest) *RefreshRespo
 }
 
 // Presence returns response with presence information for channel.
-func (h *Executor) Presence(_ context.Context, cmd *PresenceRequest) *PresenceResponse {
+func (h *Executor) Presence(ctx context.Context, cmd *PresenceRequest) *PresenceResponse {
 	defer metrics.ObserveAPICommand(time.Now(), h.config.Protocol, "presence")
 
 	resp := &PresenceResponse{}
@@ -547,7 +547,7 @@ func (h *Executor) Presence(_ context.Context, cmd *PresenceRequest) *PresenceRe
 
 	presence, err := h.node.Presence(ch)
 	if err != nil {
-		log.Error().Err(err).Str("channel", ch).Msg("error getting presence for channel")
+		log.Ctx(ctx).Error().Err(err).Str("channel", ch).Msg("error getting presence for channel")
 		resp.Error = ErrorInternal
 		return resp
 	}
@@ -569,7 +569,7 @@ func (h *Executor) Presence(_ context.Context, cmd *PresenceRequest) *PresenceRe
 }
 
 // PresenceStats returns response with presence stats information for channel.
-func (h *Executor) PresenceStats(_ context.Context, cmd *PresenceStatsRequest) *PresenceStatsResponse {
+func (h *Executor) PresenceStats(ctx context.Context, cmd *PresenceStatsRequest) *PresenceStatsResponse {
 	defer metrics.ObserveAPICommand(time.Now(), h.config.Protocol, "presence_stats")
 
 	resp := &PresenceStatsResponse{}
@@ -598,7 +598,7 @@ func (h *Executor) PresenceStats(_ context.Context, cmd *PresenceStatsRequest) *
 
 	stats, err := h.node.PresenceStats(cmd.Channel)
 	if err != nil {
-		log.Error().Err(err).Str("channel", ch).Msg("error getting presence stats for channel")
+		log.Ctx(ctx).Error().Err(err).Str("channel", ch).Msg("error getting presence stats for channel")
 		resp.Error = ErrorInternal
 		return resp
 	}
@@ -612,7 +612,7 @@ func (h *Executor) PresenceStats(_ context.Context, cmd *PresenceStatsRequest) *
 }
 
 // History returns response with history information for channel.
-func (h *Executor) History(_ context.Context, cmd *HistoryRequest) *HistoryResponse {
+func (h *Executor) History(ctx context.Context, cmd *HistoryRequest) *HistoryResponse {
 	defer metrics.ObserveAPICommand(time.Now(), h.config.Protocol, "history")
 
 	resp := &HistoryResponse{}
@@ -657,7 +657,7 @@ func (h *Executor) History(_ context.Context, cmd *HistoryRequest) *HistoryRespo
 		centrifuge.WithReverse(cmd.Reverse),
 	)
 	if err != nil {
-		log.Error().Err(err).Str("channel", ch).Msg("error getting history for channel")
+		log.Ctx(ctx).Error().Err(err).Str("channel", ch).Msg("error getting history for channel")
 		if errors.Is(err, centrifuge.ErrorUnrecoverablePosition) {
 			resp.Error = ErrorUnrecoverablePosition
 			return resp
@@ -694,7 +694,7 @@ func (h *Executor) History(_ context.Context, cmd *HistoryRequest) *HistoryRespo
 }
 
 // HistoryRemove removes all history information for channel.
-func (h *Executor) HistoryRemove(_ context.Context, cmd *HistoryRemoveRequest) *HistoryRemoveResponse {
+func (h *Executor) HistoryRemove(ctx context.Context, cmd *HistoryRemoveRequest) *HistoryRemoveResponse {
 	defer metrics.ObserveAPICommand(time.Now(), h.config.Protocol, "history_remove")
 
 	resp := &HistoryRemoveResponse{}
@@ -723,7 +723,7 @@ func (h *Executor) HistoryRemove(_ context.Context, cmd *HistoryRemoveRequest) *
 
 	err = h.node.RemoveHistory(ch)
 	if err != nil {
-		log.Error().Err(err).Str("channel", ch).Msg("error removing history for channel")
+		log.Ctx(ctx).Error().Err(err).Str("channel", ch).Msg("error removing history for channel")
 		resp.Error = ErrorInternal
 		return resp
 	}
@@ -732,14 +732,14 @@ func (h *Executor) HistoryRemove(_ context.Context, cmd *HistoryRemoveRequest) *
 }
 
 // Info returns information about running nodes.
-func (h *Executor) Info(_ context.Context, _ *InfoRequest) *InfoResponse {
+func (h *Executor) Info(ctx context.Context, _ *InfoRequest) *InfoResponse {
 	defer metrics.ObserveAPICommand(time.Now(), h.config.Protocol, "info")
 
 	resp := &InfoResponse{}
 
 	info, err := h.node.Info()
 	if err != nil {
-		log.Error().Err(err).Msg("error calling info")
+		log.Ctx(ctx).Error().Err(err).Msg("error calling info")
 		resp.Error = ErrorInternal
 		return resp
 	}
@@ -779,7 +779,7 @@ func (h *Executor) RPC(ctx context.Context, cmd *RPCRequest) *RPCResponse {
 	resp := &RPCResponse{}
 
 	if cmd.Method == "" {
-		log.Error().Err(errors.New("rpc method required")).Msg("bad rpc request")
+		log.Ctx(ctx).Error().Err(errors.New("rpc method required")).Msg("bad rpc request")
 		resp.Error = ErrorBadRequest
 		return resp
 	}
@@ -794,7 +794,7 @@ func (h *Executor) RPC(ctx context.Context, cmd *RPCRequest) *RPCResponse {
 
 	data, err := handler(ctx, cmd.Params)
 	if err != nil {
-		log.Error().Err(err).Str("method", cmd.Method).Msg("error calling rpc method")
+		log.Ctx(ctx).Error().Err(err).Str("method", cmd.Method).Msg("error calling rpc method")
 		resp.Error = toAPIErr(err)
 		return resp
 	}
@@ -815,7 +815,7 @@ func (h *Executor) Channels(ctx context.Context, cmd *ChannelsRequest) *Channels
 
 	channels, err := h.surveyCaller.Channels(ctx, cmd)
 	if err != nil {
-		log.Error().Err(err).Msg("error calling channels")
+		log.Ctx(ctx).Error().Err(err).Msg("error calling channels")
 		resp.Error = toAPIErr(err)
 		return resp
 	}

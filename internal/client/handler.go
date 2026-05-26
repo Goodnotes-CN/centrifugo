@@ -8,6 +8,7 @@ import (
 
 	"github.com/centrifugal/centrifugo/v6/internal/clientcontext"
 	"github.com/centrifugal/centrifugo/v6/internal/clientstorage"
+	"github.com/centrifugal/centrifugo/v6/internal/clienttrace"
 	"github.com/centrifugal/centrifugo/v6/internal/config"
 	"github.com/centrifugal/centrifugo/v6/internal/configtypes"
 	"github.com/centrifugal/centrifugo/v6/internal/jwtverify"
@@ -130,6 +131,14 @@ func (h *Handler) Setup() error {
 	concurrency := cfg.Client.Concurrency
 
 	h.node.OnConnect(func(client *centrifuge.Client) {
+		// Bind the connection's ctx (which carries the OTel SpanContext extracted
+		// from the WS upgrade traceparent header) so the zerolog → OTel bridge
+		// can attach trace_id to library-emitted log lines like
+		// "client command error" that have no other ctx available.
+		clienttrace.Store(client.ID(), client.Context())
+		client.OnDisconnect(func(centrifuge.DisconnectEvent) {
+			clienttrace.Delete(client.ID())
+		})
 
 		var semaphore chan struct{}
 		if concurrency > 1 {
