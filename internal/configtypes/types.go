@@ -274,6 +274,8 @@ type OpenTelemetry struct {
 	Enabled   bool `mapstructure:"enabled" json:"enabled" envconfig:"enabled" yaml:"enabled" toml:"enabled"`
 	API       bool `mapstructure:"api" json:"api" envconfig:"api" yaml:"api" toml:"api"`
 	Consuming bool `mapstructure:"consuming" json:"consuming" envconfig:"consuming" yaml:"consuming" toml:"consuming"`
+	Metrics   bool `mapstructure:"metrics" json:"metrics" envconfig:"metrics" yaml:"metrics" toml:"metrics"`
+	Logs      bool `mapstructure:"logs" json:"logs" envconfig:"logs" yaml:"logs" toml:"logs"`
 }
 
 type HttpAPI struct {

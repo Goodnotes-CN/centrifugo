@@ -140,10 +140,15 @@ func Run(cmd *cobra.Command, configFile string) {
 		log.Fatal().Err(err).Msg("error creating Centrifuge Node")
 	}
 
+	var otelProviders *telemetry.Providers
 	if cfg.OpenTelemetry.Enabled {
-		_, err := telemetry.SetupTracing(context.Background())
+		otelProviders, err = telemetry.Setup(
+			context.Background(),
+			cfg.OpenTelemetry.Metrics,
+			cfg.OpenTelemetry.Logs,
+		)
 		if err != nil {
-			log.Fatal().Err(err).Msg("error setting up opentelemetry tracing")
+			log.Fatal().Err(err).Msg("error setting up opentelemetry")
 		}
 	}
 
@@ -304,7 +309,7 @@ func Run(cmd *cobra.Command, configFile string) {
 	handleSignals(
 		cmd, configFile, node, cfgContainer, tokenVerifier, subTokenVerifier,
 		httpServers, grpcAPIServer, grpcUniServer,
-		serviceDone, serviceCancel,
+		serviceDone, serviceCancel, otelProviders,
 	)
 }
 
@@ -312,7 +317,7 @@ func handleSignals(
 	cmd *cobra.Command, configFile string, n *centrifuge.Node, cfgContainer *config.Container,
 	tokenVerifier *jwtverify.VerifierJWT, subTokenVerifier *jwtverify.VerifierJWT, httpServers []*http.Server,
 	grpcAPIServer *grpc.Server, grpcUniServer *grpc.Server, serviceDone chan struct{},
-	serviceCancel context.CancelFunc,
+	serviceCancel context.CancelFunc, otelProviders *telemetry.Providers,
 ) {
 	cfg := cfgContainer.Config()
 	sigCh := make(chan os.Signal, 1)
@@ -402,6 +407,10 @@ func handleSignals(
 
 			serviceCancel()
 			<-serviceDone
+
+			if otelProviders != nil {
+				otelProviders.Shutdown(context.Background())
+			}
 
 			if pidFile != "" {
 				_ = os.Remove(pidFile)

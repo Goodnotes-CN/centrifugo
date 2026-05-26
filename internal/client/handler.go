@@ -8,6 +8,7 @@ import (
 
 	"github.com/centrifugal/centrifugo/v6/internal/clientcontext"
 	"github.com/centrifugal/centrifugo/v6/internal/clientstorage"
+	"github.com/centrifugal/centrifugo/v6/internal/clienttrace"
 	"github.com/centrifugal/centrifugo/v6/internal/config"
 	"github.com/centrifugal/centrifugo/v6/internal/configtypes"
 	"github.com/centrifugal/centrifugo/v6/internal/jwtverify"
@@ -84,6 +85,17 @@ func (h *Handler) Setup() error {
 	}
 
 	h.node.OnConnecting(func(ctx context.Context, e centrifuge.ConnectEvent) (centrifuge.ConnectReply, error) {
+		// Register the connection's ctx (which carries the OTel SpanContext
+		// extracted from the WS upgrade traceparent header) BEFORE the user
+		// handler runs. Doing it here — not in OnConnect — covers the
+		// connect-stage failure window where library-emitted logs like
+		// "client command error" (failed connect cmd) and "connection
+		// expiration must be greater than now" fire before OnConnect.
+		// context.AfterFunc drops the entry when the connection ends,
+		// covering both successful and failed paths in one place.
+		clienttrace.Store(e.ClientID, ctx)
+		context.AfterFunc(ctx, func() { clienttrace.Delete(e.ClientID) })
+
 		reply, err := h.OnClientConnecting(ctx, e, connectProxyHandler, refreshProxyHandler != nil)
 		if err != nil {
 			return centrifuge.ConnectReply{}, err

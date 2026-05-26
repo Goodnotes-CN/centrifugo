@@ -150,6 +150,16 @@ func Mux(
 	}
 
 	connMiddlewares := append([]alice.Constructor{}, commonMiddlewares...)
+	// Run otelhttp on the connection chain so WebSocket / HTTP-stream / SSE
+	// upgrade requests extract the upstream traceparent header. The resulting
+	// SpanContext rides on the request ctx into centrifuge.NewClient and is
+	// stored in clienttrace, letting library-emitted log lines (e.g. "client
+	// command error") inherit the same trace_id as the upstream caller.
+	if cfg.OpenTelemetry.Enabled {
+		connOtelHandler := middleware.NewOpenTelemetryHandler("centrifugo.connection", nil)
+		connMiddlewares = append(connMiddlewares, connOtelHandler.Middleware)
+		connMiddlewares = append(connMiddlewares, middleware.TraceLogger)
+	}
 	connLimit := cfg.Client.ConnectionLimit
 	if connLimit > 0 {
 		connLimitMW := middleware.NewConnLimit(n, cfgContainer)
@@ -258,6 +268,7 @@ func Mux(
 			otelHandler := middleware.NewOpenTelemetryHandler(op, nil)
 			if useOpenTelemetry {
 				apiMiddlewares = append(apiMiddlewares, otelHandler.Middleware)
+				apiMiddlewares = append(apiMiddlewares, middleware.TraceLogger)
 			}
 			apiMiddlewares = append(apiMiddlewares, middleware.Post)
 			if !cfg.HttpAPI.Insecure {
