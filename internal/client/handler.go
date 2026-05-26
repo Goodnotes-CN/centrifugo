@@ -85,6 +85,17 @@ func (h *Handler) Setup() error {
 	}
 
 	h.node.OnConnecting(func(ctx context.Context, e centrifuge.ConnectEvent) (centrifuge.ConnectReply, error) {
+		// Register the connection's ctx (which carries the OTel SpanContext
+		// extracted from the WS upgrade traceparent header) BEFORE the user
+		// handler runs. Doing it here — not in OnConnect — covers the
+		// connect-stage failure window where library-emitted logs like
+		// "client command error" (failed connect cmd) and "connection
+		// expiration must be greater than now" fire before OnConnect.
+		// context.AfterFunc drops the entry when the connection ends,
+		// covering both successful and failed paths in one place.
+		clienttrace.Store(e.ClientID, ctx)
+		context.AfterFunc(ctx, func() { clienttrace.Delete(e.ClientID) })
+
 		reply, err := h.OnClientConnecting(ctx, e, connectProxyHandler, refreshProxyHandler != nil)
 		if err != nil {
 			return centrifuge.ConnectReply{}, err
@@ -131,14 +142,6 @@ func (h *Handler) Setup() error {
 	concurrency := cfg.Client.Concurrency
 
 	h.node.OnConnect(func(client *centrifuge.Client) {
-		// Bind the connection's ctx (which carries the OTel SpanContext extracted
-		// from the WS upgrade traceparent header) so the zerolog → OTel bridge
-		// can attach trace_id to library-emitted log lines like
-		// "client command error" that have no other ctx available.
-		clienttrace.Store(client.ID(), client.Context())
-		client.OnDisconnect(func(centrifuge.DisconnectEvent) {
-			clienttrace.Delete(client.ID())
-		})
 
 		var semaphore chan struct{}
 		if concurrency > 1 {
