@@ -6,6 +6,7 @@ import (
 	"github.com/rs/zerolog/log"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 )
 
 // GRPCTraceLoggerUnary is the gRPC unary-server counterpart of TraceLogger:
@@ -34,6 +35,10 @@ func traceCtx(ctx context.Context) context.Context {
 	if !sc.IsValid() {
 		return ctx
 	}
+	// Echo the trace_id back via response headers so gRPC callers can quote
+	// it when reporting issues. Header key matches HTTP path's X-Trace-Id;
+	// gRPC normalises metadata keys to lowercase per spec.
+	_ = grpc.SetHeader(ctx, metadata.Pairs("x-trace-id", sc.TraceID().String()))
 	l := log.Logger.With().
 		Str("trace_id", sc.TraceID().String()).
 		Str("span_id", sc.SpanID().String()).
