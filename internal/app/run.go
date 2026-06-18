@@ -146,6 +146,7 @@ func Run(cmd *cobra.Command, configFile string) {
 			context.Background(),
 			cfg.OpenTelemetry.Metrics,
 			cfg.OpenTelemetry.Logs,
+			cfg.OpenTelemetry.GoogleCloudADCAuth,
 		)
 		if err != nil {
 			log.Fatal().Err(err).Msg("error setting up opentelemetry")
